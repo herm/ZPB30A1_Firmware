@@ -76,6 +76,8 @@ static void i2c_write(uint8_t data, uint8_t pin)
         GPIO_DISPLAY->ODR |= PIN_I2C_CLK;
         GPIO_DISPLAY->ODR &= ~PIN_I2C_CLK;
     }
+    // Avoid driving a 1 while receiving a 0.
+    GPIO_DISPLAY->ODR &= ~pin;
     // We don't need the ACK, so just do a single clock H/L without reading
     GPIO_DISPLAY->ODR |= PIN_I2C_CLK;
     GPIO_DISPLAY->ODR &= ~PIN_I2C_CLK;

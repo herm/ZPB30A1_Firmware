@@ -32,7 +32,7 @@ void gpio_init()
     GPIOB->CR2 = PINB_ENC_A | PINB_ENC_B; // Irq
 
     GPIOC->DDR = PINC_I_SET | PINC_SCL | PINC_SDA1 | PINC_SDA2;
-    GPIOC->CR1 = PINC_I_SET | PINC_SCL | // push pull
+    GPIOC->CR1 = PINC_I_SET | PINC_SCL | PINC_SDA1 | PINC_SDA2 | // push pull
                  PINC_OL_DETECT | PINC_ENC_P | PINC_RUN_P; // pullup
     GPIOC->CR2 = PINC_OL_DETECT | PINC_ENC_P | PINC_RUN_P |  // irq
                  PINC_SCL | PINC_SDA1 | PINC_SDA2; // 10 MHz
