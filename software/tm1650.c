@@ -1,5 +1,6 @@
 #include "tm1650.h"
 #include "config.h"
+#include "utils.h"
 #include "inc/stm8s_gpio.h"
 
 #define PIN_I2C_CLK PINC_SCL
@@ -62,6 +63,7 @@ uint8_t chars[] = {
     0x40, // -
 };
 
+#define TEST_DELAY 200
 static void i2c_write(uint8_t data, uint8_t pin)
 {
     uint8_t i;
@@ -72,14 +74,18 @@ static void i2c_write(uint8_t data, uint8_t pin)
         } else {
             GPIO_DISPLAY->ODR &= ~pin;
         }
+        _delay_us(TEST_DELAY);
         // Clock H/L
         GPIO_DISPLAY->ODR |= PIN_I2C_CLK;
+        _delay_us(TEST_DELAY);
         GPIO_DISPLAY->ODR &= ~PIN_I2C_CLK;
     }
     // Avoid driving a 1 while receiving a 0.
     GPIO_DISPLAY->ODR &= ~pin;
     // We don't need the ACK, so just do a single clock H/L without reading
+    _delay_us(TEST_DELAY);
     GPIO_DISPLAY->ODR |= PIN_I2C_CLK;
+    _delay_us(TEST_DELAY);
     GPIO_DISPLAY->ODR &= ~PIN_I2C_CLK;
 }
 
@@ -88,17 +94,25 @@ void disp_write(uint8_t addr, uint8_t data, uint8_t pin)
     pin = (pin == DP_TOP)?DP_TOP_PIN:DP_BOT_PIN;
     // Start sequence
     GPIO_DISPLAY->ODR |= pin;         // SDA HIGH
+    _delay_us(TEST_DELAY);
     GPIO_DISPLAY->ODR |= PIN_I2C_CLK;  // SCL HIGH
+    _delay_us(TEST_DELAY);
     GPIO_DISPLAY->ODR &= ~pin;        // SDA LOW
+    _delay_us(TEST_DELAY);
     GPIO_DISPLAY->ODR &= ~PIN_I2C_CLK; // SCL LOW
+    _delay_us(TEST_DELAY);
 
     i2c_write(addr, pin);
     i2c_write(data, pin);
 
     // Stop sequence
+    _delay_us(TEST_DELAY);
     GPIO_DISPLAY->ODR &= ~pin;        // SDA LOW
+    _delay_us(TEST_DELAY);
     GPIO_DISPLAY->ODR |= PIN_I2C_CLK;  // SCL HIGH
+    _delay_us(TEST_DELAY);
     GPIO_DISPLAY->ODR |= pin;         // SDA HIGH
+    _delay_us(TEST_DELAY);
 }
 
 void disp_char(uint8_t position, uint8_t c, uint8_t dot, uint8_t pin)
