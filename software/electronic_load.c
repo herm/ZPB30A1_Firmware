@@ -57,40 +57,31 @@ void gpio_init()
 void main(void) {
     clock_init();
     gpio_init();
-    adc_init();
-    uart_init();
-    systick_init();
-    load_init();
+//     adc_init();
+//     uart_init();
+//     systick_init();
+//     load_init();
     beeper_init();
-    fan_init();
+//     fan_init();
     settings_init();
-
-    __asm__ ("rim");
+    settings.beeper_enabled = 1;
     
-    // Power on beep
-    beeper_on();
-    delay10ms(10);
-    beeper_off();
     
-    // Init UI after power on delay to avoid spurious button events.
-    ui_init();
-    
-    systick_flag = 0; // Clear any overflows up to this point
     while (1) {
-        if (systick_flag & SYSTICK_OVERFLOW)
-        {
-            error = ERROR_TIMER_OVERFLOW;
-            systick_flag &= ~SYSTICK_OVERFLOW;
+        disp_brightness(4, DP_TOP);
+        disp_brightness(4, DP_BOT);
+        int i, position;
+        for (i=0; i<1000; i++) {
+            for (position=0; position<4; position++) {
+                int digit = i / 100;
+                disp_char(position, '0'+digit, 1, DP_TOP);
+                disp_char(position, '0'+digit, 1, DP_BOT);
+            }
+            delay_ms(3);
         }
-        if (systick_flag & SYSTICK_COUNT) {
-            adc_timer();
-            fan_timer();
-            ui_timer();
-            load_timer();
-            uart_timer();
-            systick_flag &= ~SYSTICK_COUNT;
-        }
-        uart_handler();
+        beeper_on();
+        delay_ms(50);
+        beeper_off();
     }
 }
 
