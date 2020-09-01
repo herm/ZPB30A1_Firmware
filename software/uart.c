@@ -31,6 +31,7 @@ void uart_timer()
     if (timer == F_SYSTICK/F_LOG) {
         timer = 0;
         cnt = 1;
+	    
     }
 }
 
@@ -63,19 +64,25 @@ void uart_handler()
             }
             printf("VAL:%c %d ", status, error);
         } else if (cnt == 2) {
-            printf("T %3u ", temperature);
+            printf("| T %3u ", temperature);
         } else if (cnt == 3) {
-            printf("Vi %5u ", v_12V);
+            printf("| Vi %5u ", v_12V);
         } else if (cnt == 4) {
-            printf("Vl %5u ", v_load);
+            printf("| Vl %5u ", v_load);
         } else if (cnt == 5) {
-            printf("Vs %5u ", v_sense);
+            printf("| Vs %5u ", v_sense);
         } else if (cnt == 6) {
-            printf("I %5u ", actual_current_setpoint);
+            printf("| I %5u ", actual_current_setpoint);
         } else if (cnt == 7) {
-            printf("mWs %10lu ", mWatt_seconds);
+            printf("| mWs %10lu ", mWatt_seconds);
         } else if (cnt == 8) {
-            printf("mAs %10lu ", mAmpere_seconds);
+            printf("| mAs %10lu ", mAmpere_seconds);
+		} else if (cnt == 9) {
+            printf("| RawVs  %8u ", raw_adc_vs);
+        } else if (cnt == 10) {
+            printf("| RawV %8u ", raw_adc_v);
+        } else if (cnt == 11) {
+		    printf("| PWM %8u ", ((TIM1->CCR1H*255)+TIM1->CCR1L));
         } else {
             printf("\r\n");
             cnt = 0;
@@ -93,6 +100,7 @@ void uart_handler()
             case 'R': // Run
                 if (!load_active) {
                     ui_activate_load(); //This is handled in the UI code because we want to show the run mode on the display as well.
+					                    //Commands start with: define CMD_RESET '!' ie start load !R [enter] / stop load !S [enter]
                 }
                 break;
             case 'S': // Stop

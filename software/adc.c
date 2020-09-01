@@ -11,6 +11,8 @@ uint16_t temperature;
 uint16_t v_12V;
 uint16_t v_load;
 uint16_t v_sense;
+uint16_t raw_adc_v;
+uint16_t raw_adc_vs;
 
 void adc_init()
 {
@@ -65,11 +67,13 @@ void adc_update()
     uint32_t tmpu;
 
     tmps = adc_values[ADC_CH_LOAD];
+	raw_adc_v = tmps;
     tmps -= ADC_CAL_LOAD_T;
     tmpu = tmps > 0 ? tmps : 0;
     v_load = tmpu * ADC_CAL_LOAD_M >> 16;
 
     tmps = adc_values[ADC_CH_SENSE];
+	raw_adc_vs = tmps;
     tmps -= ADC_CAL_SENSE_T;
     tmpu = tmps > 0 ? tmps : 0;
     v_sense = tmpu * ADC_CAL_SENSE_M >> 16;
