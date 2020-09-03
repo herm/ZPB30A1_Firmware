@@ -6,6 +6,7 @@ Steamerzone:
  - Added realtime updating of the load settings when making adjustments if the load is enabled
  - Enabled top display when updating load settings
  - Added raw adc values and pwm values to de serial output, usefull for calibrating the device
+ - Disabled the saving of settings
  - Tested with the 110W version
  - Use at your own risk!
 
