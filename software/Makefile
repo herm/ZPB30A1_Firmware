@@ -57,9 +57,11 @@ clean:
 	rm -rf $(BUILDDIR)
 
 flash_windows: $(HEX)
-	stvp_cmdline -BoardName=$(PROGRAMMER) -Device=$(PROCESSOR) -Port=USB -ProgMode=SWIM \
-	-verbose -no_loop -no_log -FileProg=$<
+	stm8flash -c stlinkv2 -p stm8s005k6 -verbose -s flash -w $<
 
+clear_eeprom_windows: empty_eeprom
+	stm8flash -c stlinkv2 -p stm8s005k6 -verbose -s eeprom -w $<
+	
 flash_unix: $(IHX)
 	$(STM8FLASH) -c $(PROGRAMMER) -p $(PROCESSOR) -w $<
 

@@ -232,7 +232,7 @@ static void ui_pop_item()
         menu_stack_head--;
     }
     ui_leds(0);
-    settings_update(); //Store changed value to eeprom
+    //settings_update(); //Store changed value to eeprom EWK Disable writing to eeprom
     current_item->handler(EVENT_RETURN, current_item);
 }
 
@@ -383,16 +383,18 @@ void ui_edit_value_internal(uint8_t event, const NumericEdit *edit, uint8_t leds
             pop = true;
         }
         break;
-    case EVENT_ENCODER_UP:
+    case EVENT_ENCODER_UP:               // value up
         if (value < edit->max - inc) {
-             value += inc;
+             value += inc;	   
+             *edit->var = value;         // EWK realtime updating
          } else {
              value = edit->max;
          }
         break;
-    case EVENT_ENCODER_DOWN:
-        if (value > edit->min + inc) {
+    case EVENT_ENCODER_DOWN:             // value down
+	    if (value > edit->min + inc) {
             value -= inc;
+			*edit->var = value;          // EWK realtime updating
         } else {
             value = edit->min;
         }
@@ -402,7 +404,7 @@ void ui_edit_value_internal(uint8_t event, const NumericEdit *edit, uint8_t leds
     if (output) {
         ui_number(value, edit->dot_offset, display);
     }
-    if (pop) {
+    if (pop) { 
         // Pop must be the last action to avoid overwriting the display
         ui_pop_item();
     }
@@ -425,7 +427,7 @@ void ui_edit_setpoint(uint8_t event, const MenuItem *item)
             edit = &menu_value_edit_CC;
             label = "AMP ";
             leds = LED_A;
-            break;
+			break;
         case MODE_CV:
             edit = &menu_value_edit_CV;
             label = "VOLT";
@@ -444,7 +446,8 @@ void ui_edit_setpoint(uint8_t event, const MenuItem *item)
             label = "===";
             break;
     }
-    if (!(event & EVENT_PREVIEW)) ui_text(label, DP_TOP);
+    if (!(load_active)) {if (!(event & EVENT_PREVIEW)) {ui_text(label, DP_TOP);}} //EWK Enable label when load is off
+	if (load_active) {ui_number(adc_get_voltage(), VOLT_DOT_OFFSET, DP_TOP);} //EWK Enable volt display when load active
     if (edit) ui_edit_value_internal(event, edit, leds);
 }
 
@@ -452,7 +455,7 @@ void ui_show_values(uint8_t event)
 {
     static uint16_t switch_timer = 0;
     static uint8_t update_timer = 0;
-    static bool manual_mode = false;
+    static bool manual_mode = true; //EWK disable rotating info V/AH/WH
     enum {
         STATE_V,
         STATE_AH,
@@ -466,7 +469,7 @@ void ui_show_values(uint8_t event)
     {
         switch_timer = 0;
         update_timer = F_SYSTICK/F_UI_UPDATE_DISPLAY - 1;
-        manual_mode = 0;
+        manual_mode = true; //EWK disable rotating info V/AH/WH
     }
 
     if (event == EVENT_ENCODER_UP) {
