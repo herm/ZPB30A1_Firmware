@@ -9,7 +9,8 @@ Steamerzone:
  - Disabled the saving of settings
  - Tested with the 110W version
  - Use at your own risk!
-
+##
+##
 This repository is there to build an open-source firmware for the 60W ZPB30A1 electronic load (often sold as "60W electronic load" without any article number).
 
 ## Features
