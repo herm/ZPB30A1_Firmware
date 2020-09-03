@@ -1,4 +1,13 @@
 # ZPB30A1 Firmware
+
+MessyCoding,
+Steamerzone:
+ - Increased fan pwm to reduce pwm noise in the fan
+ - Added realtime updating of the load settings when making adjustments if the load is enabled
+ - Enabled top display when updating load settings
+ - Added raw adc values and pwm values to de serial output, usefull for calibrating the device
+ - Use at your own risk!
+
 This repository is there to build an open-source firmware for the 60W ZPB30A1 electronic load (often sold as "60W electronic load" without any article number).
 
 ## Features
