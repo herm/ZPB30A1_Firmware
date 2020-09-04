@@ -11,5 +11,6 @@ extern uint16_t temperature;
 extern uint16_t v_12V;
 extern uint16_t v_load;
 extern uint16_t v_sense;
-
+extern uint16_t raw_adc_vs;
+extern uint16_t raw_adc_v;
 #endif

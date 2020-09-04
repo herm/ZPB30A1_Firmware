@@ -28,14 +28,14 @@
 #define VOLT_MAX 30000 //mV
 #define VOLT_DOT_OFFSET 3
 
-#define CUR_MIN 200 //mA
+#define CUR_MIN 150 //mA
 #define CUR_MAX 10000 //mA
 #define CUR_DOT_OFFSET 3
 
 #define POW_MIN 1 //mW
-#define POW_MAX 60000 //mW: maximum settable power
+#define POW_MAX 110000 //mW: maximum settable power
 #define POW_DOT_OFFSET 3
-#define POW_ABS_MAX 65000 //mW: Current at which the load current is reduced
+#define POW_ABS_MAX 115000 //mW: Current at which the load current is reduced
 
 /* Usable range:
   Rmin = 1V / 10A = 0.1 Ohm
@@ -47,13 +47,6 @@
 
 #define AS_DOT_OFFSET 3
 #define WS_DOT_OFFSET 3
-
-/* Defintion of t and m:
-   PWM = (current *  m - t) / 2^16
-   TODO: More efficient solution
-*/
-#define LOAD_CAL_T 8821987L
-#define LOAD_CAL_M 350445L
 
 /* Maximum: 64 */
 #define ADC_SAMPLES_PER_MEASUREMENT 64
@@ -74,11 +67,53 @@
 
 /* Defintion of t and m:
    result = (ADC - t) * m / 2^16
+*/ 
+/////////////////////////////////////////////////////////////////////
+//org
+//#define ADC_CAL_LOAD_T 1246
+//#define ADC_CAL_LOAD_M 41430 //voltage
+//#define ADC_CAL_SENSE_T 1326
+//#define ADC_CAL_SENSE_M 36546 //voltage on sense port (4 wire setup)
+/* Defintion of t and m:
+   PWM = (current *  m - t) / 2^16
+   TODO: More efficient solution
 */
-#define ADC_CAL_LOAD_T 1246
-#define ADC_CAL_LOAD_M 41430
+//#define LOAD_CAL_T 8821987L
+//#define LOAD_CAL_M 350445L
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+//module 1
+//#define ADC_CAL_LOAD_T 1233
+//#define ADC_CAL_LOAD_M 41415 //voltage
+//#define ADC_CAL_SENSE_T 1326
+//#define ADC_CAL_SENSE_M 36546 //voltage on sense port (4 wire setup)
+//
+/* Defintion of t and m:
+   PWM = (current *  m - t) / 2^16
+   TODO: More efficient solution
+*/
+//#define LOAD_CAL_T 42402794L
+//#define LOAD_CAL_M 337830L
+//
+/////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////
+//module 2
+#define ADC_CAL_LOAD_T 1260
+#define ADC_CAL_LOAD_M 41144 //voltage
 #define ADC_CAL_SENSE_T 1326
-#define ADC_CAL_SENSE_M 36546
+#define ADC_CAL_SENSE_M 36546 //voltage on sense port (4 wire setup)
+//
+/* Defintion of t and m:
+   PWM = (current *  m - t) / 2^16
+   TODO: More efficient solution
+*/
+#define LOAD_CAL_T 3529628L
+#define LOAD_CAL_M 329237L
+//
+/////////////////////////////////////////////////////////////////////
+
 
 /* ADC value at which reverse voltage protection is triggered. */
 #define ADC_LOAD_MIN  100 // ADC counts
@@ -87,12 +122,13 @@
 #define ADC_INPUT_MAX 35000 // mV
 
 #define FAN_TEMPERATURE_OTP_LIMIT 850 // * 0.1°C
-#define FAN_TEMPERATURE_FULL 750 // * 0.1°C
+#define FAN_TEMPERATURE_FULL 600 // * 0.1°C
 #define FAN_TEMPERATURE_LOW  400 // * 0.1°C
 #define FAN_ON_OFF_HYSTERESIS 50 // * 0.1°C
-#define FAN_ALWAYS_ON 0
-#define FAN_PWM_MAX 0xfff
-#define FAN_SPEED_LOW ((uint16_t)(FAN_PWM_MAX/20)) // PWM value
+#define FAN_ALWAYS_ON 1
+#define FAN_PWM_FREQ 0x00ff
+#define FAN_PWM_MAX  0x00ff
+#define FAN_SPEED_LOW ((uint16_t)(FAN_PWM_MAX/4)) // PWM value
 #define FAN_SPEED_FULL FAN_PWM_MAX // PWM value. max: 0xffff
 
 // port B

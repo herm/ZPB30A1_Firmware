@@ -30,7 +30,7 @@ void settings_init()
     if (checksum != settings_calc_checksum(data, sizeof(settings))) {
         // Invalid checksum => initialize default values
         settings.mode = MODE_CC;
-        settings.setpoints[MODE_CC] = 1000;
+        settings.setpoints[MODE_CC] = 150;
         settings.setpoints[MODE_CW] = 30000;
         settings.setpoints[MODE_CR] = 50000;
         settings.setpoints[MODE_CV] = 10000;
