@@ -28,7 +28,7 @@ version 3.8 or higher (3.7 sometimes crashes during compilation).
 The datasheet of the STM8S005 claims a write endurance of only 100 flash cycles
 but this is only for marketing purposes as it [contains the same die](https://hackaday.io/project/16097-eforth-for-cheap-stm8s-gadgets/log/76731-stm8l001j3-a-new-sop8-chip-and-the-limits-of-stm8flash)
 as the STM8S105 which is rated for 10000 cycles. So you don't have to worry
-about bricking your device by flashing it too often. Mine has far more than 100
+about bricking you device by flashing it to often. Mine has far more than 100
 cycles and still works. You can easily verify the two chips are the same as you
 can write the whole 1kB of EEPROM the STM8S105 has instead of only 128 bytes
 as claimed by the STM8S005 datasheet.
@@ -102,6 +102,58 @@ run mode.
 * TEMP: Temperature is to high. Check if the fan is working and the thermistor is connected.
 * SUP: 12V input voltage is too low. Connect better power supply.
 * INT: Internal error. Should not happen. Check the source code where this error is set and try to fix it.
+
+### Serial Remote Control
+Command can be sent to the device over the serial port. All settings can be modified and the load can be enabled and disabled. A help system is included. Send `HELP` or `command HELP` for details. The code is designed to be easily expandable if you need to add more commands.
+
+#### SETMODE [CC|CV|CR|CP]
+Set the operating Mode of the electronic load.
+  * CC = Constant Current
+  * CV = Constant Voltage
+  * CR = Constant Resistance
+  * CP = Constant Power
+
+#### SETI [mA]
+Set the target amperage for constant current mode.
+  * mA = Target amperage in milliamps between 200 (0.2A) and 10000 (10A)
+
+#### SETV [mV]
+Set the target voltage for constant voltage mode.
+  * mV = Target voltage in millivolts between 500 (0.5V) and 30000 (30V).
+
+#### SETR [mR]
+Set the target resistance for constant resistance mode.
+  * mR = Target resistance in milliohms between 10 (0.01 ohms) and 15000 (15 ohms)\n"
+
+#### SETP [mW]
+Set the target power for constant power mode.
+  * mW = Target power in milliwatts between 0 and 60000 (60W)
+
+#### SETBEEP [OFF|ON]
+Enable or disable alarm and notification sounds.
+  * OFF = Turn off alarms and notifications
+  * ON = Turn on alarms and notifications
+
+#### SETCUTOFF [mV|OFF]
+Target cutoff voltage. If the voltage falls below target, the load will be disabled.
+  * mV = Cutoff voltage in millivolts between 500 (0.5V) and 30000 (30V)
+  * OFF = No action will be taken if voltage falls too low
+
+#### SETILIMIT [mA]
+Set current limit. If this current is exceeded, the load will be disabled.
+   * mA = Amperage limit in milliamps between 200 (0.2A) and 10000 (10A)
+
+#### SETPLIMIT [NOLIMIT|LIMIT]
+Set action to take if maximum power limit is exceeded.
+  * NOLIMIT = No action is taken
+  * LIMIT = Load will be disabled if power limit is exceeded
+
+#### LOAD [ON|OFF]
+Requests the load to activate or deactivate.
+  * ON = Activates the load
+  * OFF = Deactivates the load
+NOTE: ON is similar to pressing the run button and will take you up one menu level. It will only enable the load if you are at the top menu level. Send multiple LOAD ON commands until you see the realtime output indicate the load is on.
+NOTE: OFF disables the load but does not return you to the menu. Use the hardware run button if you need to get in to the menu
 
 ## History
 This firmware started as a project to extend the firmware written by

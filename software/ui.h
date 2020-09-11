@@ -4,6 +4,19 @@
 #include <stdint.h>
 #include "menu_items.h"
 
+typedef enum {
+	EVENT_BITMASK_MENU     = 0b11,
+	EVENT_ENTER            = 0b10,
+	EVENT_RETURN           = 0b11,
+	EVENT_BITMASK_ENCODER  = 0b11100,
+	EVENT_ENCODER_UP       = 0b10000,
+	EVENT_ENCODER_DOWN     = 0b10100,
+	EVENT_ENCODER_BUTTON   = 0b11000,
+	EVENT_RUN_BUTTON       = 0b11100,
+	EVENT_TIMER            = 0b100000,
+	EVENT_PREVIEW          = 0b1000000,
+} ui_event_t;
+
 void ui_init();
 void ui_timer();
 

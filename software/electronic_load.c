@@ -11,6 +11,7 @@
 #include "fan.h"
 #include "adc.h"
 #include "beeper.h"
+#include "remote.h"
 #include "inc/stm8s_clk.h"
 #include "inc/stm8s_exti.h"
 #include "inc/stm8s_itc.h"
@@ -55,10 +56,12 @@ void gpio_init()
 
 
 void main(void) {
+
     clock_init();
     gpio_init();
     adc_init();
     uart_init();
+  	remote_init();
     systick_init();
     load_init();
     beeper_init();
@@ -66,15 +69,15 @@ void main(void) {
     settings_init();
 
     __asm__ ("rim");
-    
+
     // Power on beep
     beeper_on();
     delay10ms(10);
     beeper_off();
-    
+
     // Init UI after power on delay to avoid spurious button events.
     ui_init();
-    
+
     systick_flag = 0; // Clear any overflows up to this point
     while (1) {
         if (systick_flag & SYSTICK_OVERFLOW)
@@ -88,10 +91,11 @@ void main(void) {
             ui_timer();
             load_timer();
             uart_timer();
+            remote_timer();
             systick_flag &= ~SYSTICK_COUNT;
         }
-        uart_handler();
     }
+
 }
 
 //Voltage OK interrupt
