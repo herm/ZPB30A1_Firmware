@@ -30,10 +30,6 @@ uint16_t cal_setpoint = 0;
 uint32_t cal_slope = LOAD_CAL_SLOPE;
 int32_t cal_offset = LOAD_CAL_OFFSET;
 
-/* Calibration mode (unfinished) */
-calibration_t calibration_step;
-uint16_t calibration_value;
-
 void load_init(void)
 {
     #define PWM_RELOAD (F_CPU / F_PWM)
@@ -80,16 +76,6 @@ static inline void load_update(void)
         load_disable(DISABLE_ERROR);
         return;
     }
-
-    /* Calibration mode (unfinished), outputs raw PWM and bypasses all current
-       limits and other protections. Debug builds only. */
-    #ifdef DEBUG
-    if (calibration_step == CAL_CURRENT) {
-        TIM1->CCR1H = calibration_value >> 8;
-        TIM1->CCR1L = calibration_value & 0xff;
-        return;
-    }
-    #endif
 
     switch (load_control_mode()) {
         case MODE_CC:

@@ -20,11 +20,6 @@ typedef enum {
 extern error_t error;
 
 typedef enum {
-    CAL_NONE,
-    CAL_CURRENT,
-} calibration_t;
-
-typedef enum {
     DISABLE_USER,
     DISABLE_ERROR,
     DISABLE_CUTOFF,
@@ -33,8 +28,6 @@ typedef enum {
 extern bool load_active;
 extern bool load_regulated;
 extern uint8_t load_disable_reason;
-extern calibration_t calibration_step;
-extern uint16_t calibration_value;
 
 /* Current setpoint after all constraints are taken into account. */
 extern uint16_t current_setpoint;
