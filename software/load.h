@@ -53,9 +53,9 @@ static inline sink_mode_t load_control_mode(void)
 }
 extern uint16_t cal_setpoint;
 /* Runtime current calibration, set by calibration_init(). Definition:
-   PWM = (current * cal_m - cal_t) / 2^16. */
-extern uint32_t cal_m;
-extern int32_t cal_t;
+   PWM = (current * cal_slope - cal_offset) / 2^16. */
+extern uint32_t cal_slope;
+extern int32_t cal_offset;
 extern uint32_t mAmpere_seconds;
 extern uint32_t mWatt_seconds;
 

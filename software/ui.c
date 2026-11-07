@@ -654,8 +654,8 @@ static uint16_t wiz_point_lo; /* LO setpoint, mA */
 static uint16_t wiz_point_hi; /* HI setpoint, mA */
 static uint16_t wiz_meas_lo;  /* DMM reading at the LO point, mA */
 static uint16_t wiz_meas_hi;  /* DMM reading at the HI point, mA */
-static uint32_t wiz_fit_m;    /* solver output, staged for the commit */
-static int32_t wiz_fit_t;
+static uint32_t wiz_fit_slope;  /* solver output, staged for the commit */
+static int32_t  wiz_fit_offset;
 static uint8_t wiz_result;    /* cal_result_t of the last solve */
 static uint16_t wiz_settle;   /* ticks since the load was applied */
 static uint16_t wiz_inactive; /* ticks since the last user event */
@@ -938,7 +938,7 @@ void ui_cal_wizard(uint8_t event, const MenuItem *item)
                 cal_active = 0;
                 wiz_result = (uint8_t)calibration_solve(wiz_point_lo, wiz_point_hi,
                                                         wiz_meas_lo, wiz_meas_hi,
-                                                        &wiz_fit_m, &wiz_fit_t);
+                                                        &wiz_fit_slope, &wiz_fit_offset);
                 wiz_pop = 0;
                 wiz_state = (wiz_result == CAL_ERR_NONE) ? WIZ_SAVE : WIZ_ERR;
                 wiz_render(channel);
@@ -955,7 +955,7 @@ void ui_cal_wizard(uint8_t event, const MenuItem *item)
                a write failure leaves the RAM calibration unchanged, which
                calibration_commit_current() guarantees. */
             if (calibration_commit_current(wiz_point_lo, wiz_point_hi,
-                                           wiz_fit_m, wiz_fit_t)) {
+                                           wiz_fit_slope, wiz_fit_offset)) {
                 wiz_state = WIZ_DONE;
             } else {
                 wiz_state = WIZ_ERRW;

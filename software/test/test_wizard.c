@@ -56,8 +56,8 @@ void eeprom_write(uint16_t address, uint8_t data)
 /* ---- globals the linked modules expect from load.c / settings.c / systick.c ---- */
 volatile uint32_t systick;
 volatile uint8_t systick_flag;
-uint32_t cal_m;
-int32_t cal_t;
+uint32_t cal_slope;
+int32_t cal_offset;
 bool cal_active;
 uint16_t cal_setpoint;
 bool load_active;
@@ -216,17 +216,18 @@ static uint8_t test_crc8(const cal_block_t *block)
     return crc;
 }
 
-static void store_block(uint8_t flags, uint32_t m, int32_t t, uint16_t lo, uint16_t hi)
+static void store_block(uint8_t flags, uint32_t slope, int32_t offset,
+                        uint16_t set_lo, uint16_t set_hi)
 {
     cal_block_t b;
     memset(&b, 0, sizeof(b));
     b.magic = CAL_MAGIC;
     b.version = CAL_VERSION;
     b.flags = flags;
-    b.curr_lo = lo;
-    b.curr_hi = hi;
-    b.curr_m = m;
-    b.curr_t = t;
+    b.curr_lo = set_lo;
+    b.curr_hi = set_hi;
+    b.curr_slope = slope;
+    b.curr_offset = offset;
     b.crc = test_crc8(&b);
     memcpy(ee + CAL_EEPROM_OFFSET, &b, sizeof(b));
 }
@@ -236,7 +237,7 @@ static void reset_harness(void)
     memset(ee, 0, sizeof(ee));
     write_count = 0;
     mock_write_enabled = 1;
-    cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
+    cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
     cal_active = 0; cal_setpoint = 0;
     load_active = 0; load_regulated = 0; current_setpoint = 0;
     load_disable_reason = DISABLE_USER;
@@ -379,20 +380,20 @@ static int test_happy_path(void)
           "load disabled before the save");
 
     /* the fit for (500, 3000, 550, 3500), reference = stock constants */
-    cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
-    uint32_t m_new = 0; int32_t t_new = 0;
-    check(calibration_solve(500, 3000, 550, 3500, &m_new, &t_new) == CAL_ERR_NONE,
+    cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
+    uint32_t slope_new = 0; int32_t offset_new = 0;
+    check(calibration_solve(500, 3000, 550, 3500, &slope_new, &offset_new) == CAL_ERR_NONE,
           "setup: expected fit solves");
 
     uint32_t wc_before = write_count;
     enc_press(); /* SAVE */
     check_top("DONE", "stored: DONE screen");
-    check(cal_m == m_new && cal_t == t_new, "RAM constants installed");
+    check(cal_slope == slope_new && cal_offset == offset_new, "RAM constants installed");
     cal_block_t stored;
     memcpy(&stored, ee + CAL_EEPROM_OFFSET, sizeof(stored));
     check(stored.magic == CAL_MAGIC && stored.flags == CAL_FLAG_CURRENT &&
           stored.curr_lo == 500 && stored.curr_hi == 3000 &&
-          stored.curr_m == m_new && stored.curr_t == t_new,
+          stored.curr_slope == slope_new && stored.curr_offset == offset_new,
           "committed block in the EEPROM");
     check(write_count == wc_before + 40, "one verified block write");
 
@@ -592,7 +593,7 @@ static int test_fit_rejected(void)
     check_top("ERR ", "fit rejected: ERR screen");
     check_bot("003", "reason code 3 (CAL_ERR_GAIN + 1)");
     check(write_count == 0, "nothing written");
-    check(cal_m == LOAD_CAL_M && cal_t == LOAD_CAL_T,
+    check(cal_slope == LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET,
           "RAM calibration untouched");
     check(load_active == 0 && cal_active == 0, "load off");
     for (int i = 0; i < 105; i++) tick();
@@ -636,7 +637,7 @@ static int test_write_failure(void)
     mock_write_enabled = 1;
     check_top("ERR ", "write failure: ERR screen");
     check_bot("WR ", "write-failure code");
-    check(cal_m == LOAD_CAL_M && cal_t == LOAD_CAL_T,
+    check(cal_slope == LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET,
           "RAM calibration unchanged by the failed commit");
     check(ee[CAL_EEPROM_OFFSET + 0] == 0x00, "EEPROM untouched");
     check(load_active == 0 && cal_active == 0, "load stays off");
@@ -657,9 +658,9 @@ static int test_def_reset(void)
     reset_harness();
     /* give the wizard something to reset first */
     store_block(CAL_FLAG_CURRENT, 318629L, 9140616L, 700, 4000);
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == 318629L, "setup: calibrated block loaded");
+    check(cal_slope == 318629L, "setup: calibrated block loaded");
 
     open_reset();
     check_top("DEF ", "reset prompt");
@@ -670,9 +671,9 @@ static int test_def_reset(void)
     cal_block_t stored;
     memcpy(&stored, ee + CAL_EEPROM_OFFSET, sizeof(stored));
     check(stored.flags == 0 && stored.magic == CAL_MAGIC &&
-          stored.curr_m == LOAD_CAL_M && stored.curr_t == LOAD_CAL_T,
+          stored.curr_slope == LOAD_CAL_SLOPE && stored.curr_offset == LOAD_CAL_OFFSET,
           "default block written, all flags cleared");
-    check(cal_m == LOAD_CAL_M && cal_t == LOAD_CAL_T,
+    check(cal_slope == LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET,
           "RAM constants back to the compile-time defaults");
     check(write_count == wc + 40, "one verified block write");
     for (int i = 0; i < 102; i++) tick();
@@ -744,7 +745,7 @@ static int test_prefill_from_block(void)
 
     reset_harness();
     store_block(CAL_FLAG_CURRENT, 318629L, 9140616L, 700, 4000);
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
     open_wizard();
     check_bot("700", "LO point prefilled from the block");

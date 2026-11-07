@@ -26,9 +26,9 @@ uint16_t cal_setpoint = 0;
 /* Runtime current calibration. Defaults are the compile-time constants from
    config.h; calibration_init() replaces them from the EEPROM when a valid
    calibration block is stored there.
-   Definition: PWM = (current * cal_m - cal_t) / 2^16 */
-uint32_t cal_m = LOAD_CAL_M;
-int32_t cal_t = LOAD_CAL_T;
+   Definition: PWM = (current * cal_slope - cal_offset) / 2^16 */
+uint32_t cal_slope = LOAD_CAL_SLOPE;
+int32_t cal_offset = LOAD_CAL_OFFSET;
 
 /* Calibration mode (unfinished) */
 calibration_t calibration_step;
@@ -181,7 +181,7 @@ static inline void load_update(void)
     }
     current_setpoint = current;
 
-    /* PWM = (current*m - t)/2^16, see calibration.c */
+    /* PWM = (current*cal_slope - cal_offset)/2^16, see calibration.c */
     uint16_t pwm = calibration_current_to_pwm(current);
     TIM1->CCR1H = pwm >> 8;
     TIM1->CCR1L = pwm & 0xff;

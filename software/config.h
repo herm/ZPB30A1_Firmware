@@ -47,8 +47,10 @@
 #define AS_DOT_OFFSET 3
 #define WS_DOT_OFFSET 3
 
-/* Definition of t and m:
-   PWM = (current * m - t) / 2^16
+/* Definition of slope and offset for the current path:
+   PWM = (current * slope - offset) / 2^16
+   `slope` is the Q16 slope in PWM LSB per mA; `offset` is the Q16 term that
+   is subtracted from it, i.e. the negated Q16 y-intercept.
 
    The values below were measured on the author's unit. On a different unit
    the load current can be far off the setpoint. Use the on-device wizard
@@ -57,8 +59,8 @@
    compile-time defaults and the fallback whenever the EEPROM block is
    missing or invalid.
 */
-#define LOAD_CAL_T 8821987L
-#define LOAD_CAL_M 350445L
+#define LOAD_CAL_OFFSET 8821987L
+#define LOAD_CAL_SLOPE 350445L
 
 /* Runtime current calibration (calibration.c, calibration wizard in ui.c):
    Default measurement points (mA) and the wizard's timings. F_SYSTICK is

@@ -29,7 +29,7 @@
 #include <stddef.h>
 
 #include "calibration.h"
-#include "load.h"     /* cal_m / cal_t, provided by load.c on the target */
+#include "load.h"     /* cal_slope / cal_offset, provided by load.c on the target */
 #include "config.h"
 #include "systick.h"  /* systick / systick_flag */
 
@@ -55,8 +55,8 @@ void eeprom_write(uint16_t address, uint8_t data)
 /* ---- globals the module expects from systick.c / load.c ---- */
 volatile uint32_t systick;
 volatile uint8_t systick_flag;
-uint32_t cal_m;
-int32_t cal_t;
+uint32_t cal_slope;
+int32_t cal_offset;
 
 /* ---- CRC-8 helper, copy of cal_crc8() in calibration.c ---- */
 static uint8_t test_crc8(const cal_block_t *block)
@@ -73,11 +73,11 @@ static uint8_t test_crc8(const cal_block_t *block)
 }
 
 /* ---- Unclamped PWM, copy of cal_pwm_raw() in calibration.c ---- */
-static int32_t test_pwm_raw(uint32_t m, int32_t t, uint16_t current)
+static int32_t test_pwm_raw(uint32_t slope, int32_t offset, uint16_t current)
 {
-    uint16_t m_q4 = (uint16_t)((m + 8) >> 4);
-    int32_t t_q4 = t >> 4;
-    return (((int32_t)current * (int32_t)m_q4) - t_q4) >> 12;
+    uint16_t slope_q4 = (uint16_t)((slope + 8) >> 4);
+    int32_t offset_q4 = offset >> 4;
+    return (((int32_t)current * (int32_t)slope_q4) - offset_q4) >> 12;
 }
 
 /* ---- Clamping of a raw PWM value, as calibration_current_to_pwm() does ---- */
@@ -90,14 +90,18 @@ static uint16_t test_clamp16(int32_t pwm)
 
 /* ---- Mirror of the documented two-point fit, used to show why a fit is
  *      unrealizable. Test only, the module has its own implementation. ---- */
-static void test_fit(uint16_t i_lo, uint16_t i_hi, uint16_t a_lo, uint16_t a_hi,
-                      uint32_t *m_out, int32_t *t_out)
+static void test_fit(uint16_t set_lo, uint16_t set_hi,
+                     uint16_t measured_lo, uint16_t measured_hi,
+                     uint32_t *slope_out, int32_t *offset_out)
 {
-    int32_t a12 = ((int32_t)(a_hi - a_lo) * 4096) / (int32_t)(i_hi - i_lo);
-    int32_t b = a_lo - ((a12 * (int32_t)i_lo) / 4096);
-    uint32_t m_new = ((uint32_t)cal_m * 4096UL + (uint32_t)(a12 / 2)) / (uint32_t)a12;
-    *m_out = m_new;
-    *t_out = cal_t + b * (int32_t)m_new;
+    int32_t gain_q12 = ((int32_t)(measured_hi - measured_lo) * 4096) /
+                       (int32_t)(set_hi - set_lo);
+    int32_t intercept_ma = measured_lo -
+                           ((gain_q12 * (int32_t)set_lo) / 4096);
+    uint32_t slope_new = ((uint32_t)cal_slope * 4096UL +
+                          (uint32_t)(gain_q12 / 2)) / (uint32_t)gain_q12;
+    *slope_out = slope_new;
+    *offset_out = cal_offset + intercept_ma * (int32_t)slope_new;
 }
 
 /* ---- test bookkeeping ---- */
@@ -117,17 +121,18 @@ static void ee_fill(uint8_t value)
 
 /* Store a block in the simulated EEPROM (as a previous firmware version or
  * the wizard would have written it). */
-static void store_block(uint8_t flags, uint32_t m, int32_t t, uint16_t lo, uint16_t hi)
+static void store_block(uint8_t flags, uint32_t slope, int32_t offset,
+                        uint16_t set_lo, uint16_t set_hi)
 {
     cal_block_t b;
     memset(&b, 0, sizeof(b));
     b.magic = CAL_MAGIC;
     b.version = CAL_VERSION;
     b.flags = flags;
-    b.curr_lo = lo;
-    b.curr_hi = hi;
-    b.curr_m = m;
-    b.curr_t = t;
+    b.curr_lo = set_lo;
+    b.curr_hi = set_hi;
+    b.curr_slope = slope;
+    b.curr_offset = offset;
     b.crc = test_crc8(&b);
     memcpy(ee + CAL_EEPROM_OFFSET, &b, sizeof(b));
 }
@@ -141,9 +146,9 @@ static int test_ccr1_table(void)
     int before = failures;
 
     ee_fill(0x00);
-    cal_m = 0; cal_t = 0; /* poison: init must replace it */
+    cal_slope = 0; cal_offset = 0; /* poison: init must replace it */
     calibration_init();
-    check(cal_m == (uint32_t)LOAD_CAL_M && cal_t == LOAD_CAL_T,
+    check(cal_slope == (uint32_t)LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET,
           "blank EEPROM: init installs the compile-time defaults");
     check(write_count == 0, "blank EEPROM: init writes nothing");
 
@@ -174,50 +179,50 @@ static int test_ccr1_table(void)
 /* ======================================================================== */
 struct vector {
     const char *name;
-    uint16_t i1, i2;      /* applied setpoints (mA) */
-    uint16_t a1, a2;      /* currents measured on the meter (mA) */
-    uint32_t m;           /* expected slope after the fit */
-    int32_t t;            /* expected offset after the fit */
-    int a_num, a_den;     /* simulated plant gain */
-    int b;                /* simulated plant offset (mA) */
+    uint16_t set_lo, set_hi;              /* applied setpoints (mA) */
+    uint16_t measured_lo, measured_hi;    /* meter readings (mA) */
+    uint32_t slope;                       /* expected slope after the fit */
+    int32_t offset;                       /* expected offset after the fit */
+    int plant_gain_num, plant_gain_den;   /* simulated plant gain */
+    int plant_offset_ma;                  /* simulated plant offset (mA) */
 };
 
 static const struct vector vectors[] = {
-    {"perfect    (a=1.0, b=0)   ", 500, 3000,  500, 3000,
+    {"perfect    (gain=1.0, off=0)  ", 500, 3000,  500, 3000,
      350445L,   8821987L, 10, 10,    0},
-    {"gain +10%  (a=1.1, b=0)   ", 500, 3000,  550, 3300,
+    {"gain +10%  (gain=1.1, off=0)  ", 500, 3000,  550, 3300,
      318629L,   9140616L, 11, 10,    0},
-    {"offset 200 (a=1.0, b=200) ", 500, 3000,  700, 3200,
+    {"offset 200 (gain=1.0, off=200)", 500, 3000,  700, 3200,
      350445L,  78910987L, 10, 10,  200},
-    {"gain -10%, off -100       ", 500, 3000,  350, 2600,
+    {"gain -10%, off -100           ", 500, 3000,  350, 2600,
      389426L, -29731187L,  9, 10, -100},
 };
 
 static int test_appendix_b(void)
 {
-    printf("=== 2. Appendix B vectors (exact m'/t') ===\n");
+    printf("=== 2. Appendix B vectors (exact slope'/offset') ===\n");
     int before = failures;
 
     for (unsigned v = 0; v < sizeof(vectors) / sizeof(vectors[0]); v++) {
         const struct vector *vec = &vectors[v];
-        cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
-        uint32_t m_new = 0; int32_t t_new = 0;
-        cal_result_t r = calibration_solve(vec->i1, vec->i2, vec->a1, vec->a2,
-                                           &m_new, &t_new);
-        printf("    %s -> result=%d m'=%lu t'=%ld\n", vec->name, (int)r,
-               (unsigned long)m_new, (long)t_new);
+        cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
+        uint32_t slope_new = 0; int32_t offset_new = 0;
+        cal_result_t r = calibration_solve(vec->set_lo, vec->set_hi, vec->measured_lo, vec->measured_hi,
+                                           &slope_new, &offset_new);
+        printf("    %s -> result=%d slope'=%lu offset'=%ld\n", vec->name, (int)r,
+               (unsigned long)slope_new, (long)offset_new);
         if (r != CAL_ERR_NONE) {
             printf("      FAIL: expected CAL_ERR_NONE\n");
             failures++;
             continue;
         }
-        if (m_new != vec->m || t_new != vec->t) {
-            printf("      FAIL: expected m'=%lu t'=%ld\n",
-                   (unsigned long)vec->m, (long)vec->t);
+        if (slope_new != vec->slope || offset_new != vec->offset) {
+            printf("      FAIL: expected slope'=%lu offset'=%ld\n",
+                   (unsigned long)vec->slope, (long)vec->offset);
             failures++;
         }
     }
-    check(failures == before, "4 vectors: fit accepted, exact m'/t' unchanged");
+    check(failures == before, "4 vectors: fit accepted, exact slope'/offset' unchanged");
 
     return failures > before ? 1 : 0;
 }
@@ -227,9 +232,9 @@ static int test_appendix_b(void)
 /* ======================================================================== */
 struct unrealizable {
     const char *name;
-    uint16_t i1, i2, a1, a2;
-    uint32_t m;           /* the fit the module used to accept */
-    int32_t t;
+    uint16_t set_lo, set_hi, measured_lo, measured_hi;
+    uint32_t slope;           /* the fit the module used to accept */
+    int32_t offset;
     int32_t p_lo;         /* unclamped PWM at the low point */
     int32_t p_hi;         /* unclamped PWM at the high point */
 };
@@ -248,30 +253,30 @@ static int test_unrealizable(void)
 
     for (unsigned k = 0; k < sizeof(bad_fits) / sizeof(bad_fits[0]); k++) {
         const struct unrealizable *bad = &bad_fits[k];
-        cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
-        uint32_t m_new = 0xDEAD; int32_t t_new = 0xDEAD;
-        cal_result_t r = calibration_solve(bad->i1, bad->i2, bad->a1, bad->a2,
-                                           &m_new, &t_new);
+        cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
+        uint32_t slope_new = 0xDEAD; int32_t offset_new = 0xDEAD;
+        cal_result_t r = calibration_solve(bad->set_lo, bad->set_hi, bad->measured_lo, bad->measured_hi,
+                                           &slope_new, &offset_new);
         printf("    %s -> result=%d (want CAL_ERR_PWM=%d)\n",
                bad->name, (int)r, (int)CAL_ERR_PWM);
         if (r != CAL_ERR_PWM) {
             printf("      FAIL: expected CAL_ERR_PWM\n");
             failures++;
         }
-        if (m_new != 0xDEAD || t_new != 0xDEAD) {
+        if (slope_new != 0xDEAD || offset_new != 0xDEAD) {
             printf("      FAIL: outputs must stay untouched on error\n");
             failures++;
         }
         /* Show why: the fit the module used to accept needs PWM codes
          * outside the range the plant can produce. */
-        uint32_t m_fit; int32_t t_fit;
-        test_fit(bad->i1, bad->i2, bad->a1, bad->a2, &m_fit, &t_fit);
-        int32_t p_lo = test_pwm_raw(m_fit, t_fit, bad->i1);
-        int32_t p_hi = test_pwm_raw(m_fit, t_fit, bad->i2);
-        printf("      fit m'=%lu t'=%ld -> PWM at points %ld / %ld (want %ld / %ld)\n",
-               (unsigned long)m_fit, (long)t_fit, (long)p_lo, (long)p_hi,
+        uint32_t slope_fit; int32_t offset_fit;
+        test_fit(bad->set_lo, bad->set_hi, bad->measured_lo, bad->measured_hi, &slope_fit, &offset_fit);
+        int32_t p_lo = test_pwm_raw(slope_fit, offset_fit, bad->set_lo);
+        int32_t p_hi = test_pwm_raw(slope_fit, offset_fit, bad->set_hi);
+        printf("      fit slope'=%lu offset'=%ld -> PWM at points %ld / %ld (want %ld / %ld)\n",
+               (unsigned long)slope_fit, (long)offset_fit, (long)p_lo, (long)p_hi,
                (long)bad->p_lo, (long)bad->p_hi);
-        if (m_fit != bad->m || t_fit != bad->t) {
+        if (slope_fit != bad->slope || offset_fit != bad->offset) {
             printf("      FAIL: fit is not the one of the review\n");
             failures++;
         }
@@ -280,9 +285,9 @@ static int test_unrealizable(void)
             failures++;
         }
         /* With those constants the runtime conversion would clamp. */
-        cal_m = m_fit; cal_t = t_fit;
-        uint16_t p_lo_clamped = calibration_current_to_pwm(bad->i1);
-        uint16_t p_hi_clamped = calibration_current_to_pwm(bad->i2);
+        cal_slope = slope_fit; cal_offset = offset_fit;
+        uint16_t p_lo_clamped = calibration_current_to_pwm(bad->set_lo);
+        uint16_t p_hi_clamped = calibration_current_to_pwm(bad->set_hi);
         printf("      clamped at runtime: %u / %u\n", p_lo_clamped, p_hi_clamped);
         if (p_lo_clamped != 0 && p_hi_clamped != 0xFFFF) {
             printf("      FAIL: the points must not be realizable\n");
@@ -312,7 +317,11 @@ static int test_invalid(void)
     printf("=== 4. Invalid inputs (rejection list unchanged) ===\n");
     int before = failures;
 
-    struct { const char *name; uint16_t i1, i2, a1, a2; cal_result_t want; } cases[] = {
+    struct {
+        const char *name;
+        uint16_t set_lo, set_hi, measured_lo, measured_hi;
+        cal_result_t want;
+    } cases[] = {
         {"I2 == I1 duplicate            ",   500,   500,   500,   500, CAL_ERR_RANGE},
         {"I2 < I1 descending            ",  3000,   500,  3000,   500, CAL_ERR_RANGE},
         {"I gap 100 < 200               ",   500,   600,   500,   600, CAL_ERR_RANGE},
@@ -323,23 +332,23 @@ static int test_invalid(void)
         {"A2 == A1 duplicate            ",   500,  3000,   500,   500, CAL_ERR_RANGE},
         {"A2 < A1 descending            ",   500,  3000,  3000,   500, CAL_ERR_RANGE},
         {"A gap 50 < 100                ",   500,  3000,   500,   550, CAL_ERR_RANGE},
-        {"gain 0.40 (a12=1638)          ",   500,  3000,   200,  1200, CAL_ERR_GAIN},
-        {"gain 2.20 (a12=9011)          ",   500,  3000,  1100,  6600, CAL_ERR_GAIN},
-        {"gain 0.50 border (a12=2048)   ",   500,  3500,   250,  1750, CAL_ERR_SLOPE},
-        {"|b|=2500 > 2000               ",   500,  3000,  3000,  5500, CAL_ERR_OFFSET},
-        {"t'=534e6 > 5e8 (b=1500)       ",   500,  3000,  2000,  4500, CAL_ERR_OFFSET},
+        {"gain 0.40 (gain_q12=1638)        ",   500,  3000,   200,  1200, CAL_ERR_GAIN},
+        {"gain 2.20 (gain_q12=9011)        ",   500,  3000,  1100,  6600, CAL_ERR_GAIN},
+        {"gain 0.50 border (gain_q12=2048) ",   500,  3500,   250,  1750, CAL_ERR_SLOPE},
+        {"|intercept_ma|=2500 > 2000       ",   500,  3000,  3000,  5500, CAL_ERR_OFFSET},
+        {"offset'=534e6 > 5e8 (int=1500)   ",   500,  3000,  2000,  4500, CAL_ERR_OFFSET},
         {"control (perfectly valid)     ",   500,  3000,   500,  3000, CAL_ERR_NONE},
     };
 
     bool ok = true;
     for (unsigned k = 0; k < sizeof(cases) / sizeof(cases[0]); k++) {
-        cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
-        uint32_t m_new = 0; int32_t t_new = 0;
-        uint32_t m_ref = cal_m; int32_t t_ref = cal_t;
-        cal_result_t r = calibration_solve(cases[k].i1, cases[k].i2,
-                                           cases[k].a1, cases[k].a2,
-                                           &m_new, &t_new);
-        bool untouched = (cal_m == m_ref && cal_t == t_ref);
+        cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
+        uint32_t slope_new = 0; int32_t offset_new = 0;
+        uint32_t slope_ref = cal_slope; int32_t offset_ref = cal_offset;
+        cal_result_t r = calibration_solve(cases[k].set_lo, cases[k].set_hi,
+                                           cases[k].measured_lo, cases[k].measured_hi,
+                                           &slope_new, &offset_new);
+        bool untouched = (cal_slope == slope_ref && cal_offset == offset_ref);
         printf("    %s got=%d want=%d\n", cases[k].name, (int)r, (int)cases[k].want);
         if (r != cases[k].want) ok = false;
         if (cases[k].want != CAL_ERR_NONE && !untouched) ok = false;
@@ -357,14 +366,14 @@ static int test_crc_bits(void)
     printf("=== 5. CRC: single bit flips in bytes 1..39 ===\n");
     int before = failures;
 
-    const uint32_t m = 318629L;
-    const int32_t t = 9140616L;
+    const uint32_t slope = 318629L;
+    const int32_t offset = 9140616L;
 
     ee_fill(0xFF);
-    store_block(CAL_FLAG_CURRENT, m, t, 500, 3000);
-    cal_m = 0; cal_t = 0;
+    store_block(CAL_FLAG_CURRENT, slope, offset, 500, 3000);
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == m && cal_t == t, "setup: the valid block is loaded");
+    check(cal_slope == slope && cal_offset == offset, "setup: the valid block is loaded");
 
     unsigned detected = 0, total = 0;
     for (unsigned byte = 1; byte < CAL_EEPROM_SIZE; byte++) {
@@ -372,10 +381,10 @@ static int test_crc_bits(void)
             uint8_t mask = (uint8_t)(1u << bit);
             uint8_t saved = ee[CAL_EEPROM_OFFSET + byte];
             ee[CAL_EEPROM_OFFSET + byte] = (uint8_t)(saved ^ mask);
-            cal_m = 0; cal_t = 0;
+            cal_slope = 0; cal_offset = 0;
             calibration_init();
             total++;
-            if (cal_m == (uint32_t)LOAD_CAL_M && cal_t == LOAD_CAL_T) detected++;
+            if (cal_slope == (uint32_t)LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET) detected++;
             ee[CAL_EEPROM_OFFSET + byte] = saved;
         }
     }
@@ -395,23 +404,23 @@ static int test_boot_no_write(void)
     int before = failures;
 
     ee_fill(0x00);
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == (uint32_t)LOAD_CAL_M && cal_t == LOAD_CAL_T && write_count == 0,
+    check(cal_slope == (uint32_t)LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET && write_count == 0,
           "blank block: defaults installed, no write");
 
     ee_fill(0xFF);
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == (uint32_t)LOAD_CAL_M && cal_t == LOAD_CAL_T && write_count == 0,
+    check(cal_slope == (uint32_t)LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET && write_count == 0,
           "erased block: defaults installed, no write");
 
     ee_fill(0xFF);
     store_block(CAL_FLAG_CURRENT, 318629L, 9140616L, 500, 3000);
     ee[CAL_EEPROM_OFFSET + 8] ^= 0x40; /* corrupt the slope */
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == (uint32_t)LOAD_CAL_M && cal_t == LOAD_CAL_T && write_count == 0,
+    check(cal_slope == (uint32_t)LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET && write_count == 0,
           "corrupt block: defaults installed, no write");
 
     return failures > before ? 1 : 0;
@@ -421,8 +430,8 @@ static int test_boot_no_write(void)
 /* 7. Applied-current error of an accepted fit                              */
 /* ======================================================================== */
 /* Simulated plant: a PWM code p delivers the current
- *   I_stock(p) = (p * 2^16 + LOAD_CAL_T) / LOAD_CAL_M      (stock constants)
- *   A(p)       = a * I_stock(p) + b                        (plant gain/offset)
+ *   I_stock(p) = (p * 2^16 + LOAD_CAL_OFFSET) / LOAD_CAL_SLOPE
+ *   A(p)       = plant_gain * I_stock(p) + plant_offset_ma
  * The firmware asks for the setpoint, the plant delivers A: the error is
  * |A - setpoint| / setpoint.
  */
@@ -433,25 +442,25 @@ static int test_applied_error(void)
 
     for (unsigned v = 0; v < sizeof(vectors) / sizeof(vectors[0]); v++) {
         const struct vector *vec = &vectors[v];
-        cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
-        uint32_t m_new = 0; int32_t t_new = 0;
-        cal_result_t r = calibration_solve(vec->i1, vec->i2, vec->a1, vec->a2,
-                                           &m_new, &t_new);
+        cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
+        uint32_t slope_new = 0; int32_t offset_new = 0;
+        cal_result_t r = calibration_solve(vec->set_lo, vec->set_hi, vec->measured_lo, vec->measured_hi,
+                                           &slope_new, &offset_new);
         if (r != CAL_ERR_NONE) {
             printf("    %s -> not accepted (%d)\n", vec->name, (int)r);
             failures++;
             continue;
         }
         /* Install the fitted constants, as the wizard would do. */
-        cal_m = m_new; cal_t = t_new;
-        const uint16_t points[2] = {vec->i1, vec->i2};
+        cal_slope = slope_new; cal_offset = offset_new;
+        const uint16_t points[2] = {vec->set_lo, vec->set_hi};
         for (unsigned p = 0; p < 2; p++) {
             uint16_t setpoint = points[p];
             uint16_t pwm = calibration_current_to_pwm(setpoint);
-            double i_stock = ((double)pwm * 65536.0 + (double)LOAD_CAL_T) /
-                             (double)LOAD_CAL_M;
-            double actual = (double)vec->a_num / (double)vec->a_den * i_stock +
-                            (double)vec->b;
+            double i_stock = ((double)pwm * 65536.0 + (double)LOAD_CAL_OFFSET) /
+                             (double)LOAD_CAL_SLOPE;
+            double actual = (double)vec->plant_gain_num / (double)vec->plant_gain_den * i_stock +
+                            (double)vec->plant_offset_ma;
             double err = (actual - (double)setpoint < 0.0 ? (double)setpoint - actual
                                                           : actual - (double)setpoint) /
                          (double)setpoint * 100.0;
@@ -498,30 +507,32 @@ static int test_property(void)
     for (unsigned n = 0; n < 10000; n++) {
         /* Plausible calibration points: the measured gain is inside the
          * documented range, so most cases are accepted. */
-        uint16_t i1 = (uint16_t)rng_range(CUR_MIN, CUR_MAX - 2000);
-        uint16_t i2 = (uint16_t)(i1 + rng_range(200, 2000));
-        if (i2 > CUR_MAX) { skipped++; continue; }
-        uint16_t a1 = (uint16_t)rng_range(CUR_MIN, CUR_MAX - 3000);
+        uint16_t set_lo = (uint16_t)rng_range(CUR_MIN, CUR_MAX - 2000);
+        uint16_t set_hi = (uint16_t)(set_lo + rng_range(200, 2000));
+        if (set_hi > CUR_MAX) { skipped++; continue; }
+        uint16_t measured_lo = (uint16_t)rng_range(CUR_MIN, CUR_MAX - 3000);
         uint32_t gap = rng_range(100, 2000);
-        uint32_t a2 = (uint32_t)a1 + gap;
-        if (a2 > CUR_MAX) { skipped++; continue; }
+        uint32_t measured_hi = (uint32_t)measured_lo + gap;
+        if (measured_hi > CUR_MAX) { skipped++; continue; }
         /* keep the gain inside 0.5 .. 2.0 */
-        uint32_t max_gap = (uint32_t)(i2 - i1) * 2;
+        uint32_t max_gap = (uint32_t)(set_hi - set_lo) * 2;
         if (gap > max_gap) gap = max_gap;
         if (gap < 100) { skipped++; continue; }
-        a2 = (uint32_t)a1 + gap;
+        measured_hi = (uint32_t)measured_lo + gap;
 
-        cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
-        uint32_t m_new = 0; int32_t t_new = 0;
-        cal_result_t r = calibration_solve(i1, i2, a1, (uint16_t)a2,
-                                           &m_new, &t_new);
+        cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
+        uint32_t slope_new = 0; int32_t offset_new = 0;
+        cal_result_t r = calibration_solve(set_lo, set_hi, measured_lo, (uint16_t)measured_hi,
+                                           &slope_new, &offset_new);
         if (r != CAL_ERR_NONE) { rejected++; continue; }
         accepted++;
-        int32_t p_lo = test_pwm_raw(m_new, t_new, i1);
-        int32_t p_hi = test_pwm_raw(m_new, t_new, i2);
+        int32_t p_lo = test_pwm_raw(slope_new, offset_new, set_lo);
+        int32_t p_hi = test_pwm_raw(slope_new, offset_new, set_hi);
         if (!(p_lo > 0 && p_lo <= 0xFFFF && p_hi > 0 && p_hi <= 0xFFFF)) {
-            printf("    FAIL: i=(%u,%u) a=(%u,%u) m'=%lu t'=%ld -> PWM %ld / %ld\n",
-                   i1, i2, a1, a2, (unsigned long)m_new, (long)t_new,
+            printf("    FAIL: set=(%u,%u) measured=(%u,%u) "
+                   "slope'=%lu offset'=%ld -> PWM %ld / %ld\n",
+                   set_lo, set_hi, measured_lo, measured_hi,
+                   (unsigned long)slope_new, (long)offset_new,
                    (long)p_lo, (long)p_hi);
             failures++;
             break;
@@ -543,16 +554,16 @@ static int test_commit_success(void)
     int before = failures;
 
     ee_fill(0x00);
-    cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
+    cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
     calibration_init();
-    uint32_t m_new = 0; int32_t t_new = 0;
-    check(calibration_solve(500, 3000, 550, 3300, &m_new, &t_new) == CAL_ERR_NONE,
+    uint32_t slope_new = 0; int32_t offset_new = 0;
+    check(calibration_solve(500, 3000, 550, 3300, &slope_new, &offset_new) == CAL_ERR_NONE,
           "setup: fit solved");
 
     uint32_t wc_before = write_count;
-    check(calibration_commit_current(500, 3000, m_new, t_new),
+    check(calibration_commit_current(500, 3000, slope_new, offset_new),
           "commit accepted");
-    check(cal_m == m_new && cal_t == t_new, "RAM constants updated");
+    check(cal_slope == slope_new && cal_offset == offset_new, "RAM constants updated");
     /* One write pass: 38 payload bytes (1..39 without the CRC byte), then
        the CRC, then the magic byte. */
     check(write_count == wc_before + 40,
@@ -565,12 +576,12 @@ static int test_commit_success(void)
     check(stored.crc == test_crc8(&stored), "CRC written and correct");
     check(stored.flags == CAL_FLAG_CURRENT, "only CAL_FLAG_CURRENT set");
     check(stored.curr_lo == 500 && stored.curr_hi == 3000, "points stored");
-    check(stored.curr_m == m_new && stored.curr_t == t_new, "constants stored");
+    check(stored.curr_slope == slope_new && stored.curr_offset == offset_new, "constants stored");
 
     /* A reboot must restore the committed fit and write nothing. */
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == m_new && cal_t == t_new, "reboot restores the fit");
+    check(cal_slope == slope_new && cal_offset == offset_new, "reboot restores the fit");
     check(write_count == wc_before + 40, "reboot wrote nothing");
 
     return failures > before ? 1 : 0;
@@ -585,34 +596,34 @@ static int test_commit_range(void)
     int before = failures;
 
     ee_fill(0x00);
-    cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
+    cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
     calibration_init();
     uint32_t wc_before = write_count;
-    uint32_t m_ref = cal_m; int32_t t_ref = cal_t;
+    uint32_t slope_ref = cal_slope; int32_t offset_ref = cal_offset;
 
     /* Limits duplicated from the static defines in calibration.c:
-       CAL_M_MIN 150000, CAL_M_MAX 700000, CAL_T_MAX 500000000. */
+       CAL_SLOPE_MIN 150000, CAL_SLOPE_MAX 700000, CAL_OFFSET_MAX_Q16 500000000. */
     check(!calibration_commit_current(500, 3000, 149999L, 0),
           "slope below the sanity range rejected");
     check(!calibration_commit_current(500, 3000, 700001L, 0),
           "slope above the sanity range rejected");
     check(!calibration_commit_current(500, 3000, 350445L, 500000001L),
-          "offset above CAL_T_MAX rejected");
+          "offset above CAL_OFFSET_MAX_Q16 rejected");
     check(!calibration_commit_current(500, 3000, 350445L, -500000001L),
-          "offset below -CAL_T_MAX rejected");
+          "offset below -CAL_OFFSET_MAX_Q16 rejected");
     check(write_count == wc_before, "no EEPROM write on a rejected commit");
-    check(cal_m == m_ref && cal_t == t_ref, "RAM constants untouched");
+    check(cal_slope == slope_ref && cal_offset == offset_ref, "RAM constants untouched");
 
     /* The limits themselves are inclusive. */
     check(calibration_commit_current(500, 3000, 150000L, 500000000L),
           "borderline slope/offset accepted (lower)");
-    check(cal_m == 150000L && cal_t == 500000000L, "borderline values installed");
+    check(cal_slope == 150000L && cal_offset == 500000000L, "borderline values installed");
     ee_fill(0x00);
-    cal_m = LOAD_CAL_M; cal_t = LOAD_CAL_T;
+    cal_slope = LOAD_CAL_SLOPE; cal_offset = LOAD_CAL_OFFSET;
     calibration_init();
     check(calibration_commit_current(500, 3000, 700000L, -500000000L),
           "borderline slope/offset accepted (upper)");
-    check(cal_m == 700000L && cal_t == -500000000L, "borderline values installed");
+    check(cal_slope == 700000L && cal_offset == -500000000L, "borderline values installed");
 
     return failures > before ? 1 : 0;
 }
@@ -627,26 +638,26 @@ static int test_commit_write_failure(void)
 
     ee_fill(0x00);
     store_block(CAL_FLAG_CURRENT, 350445L, 8821987L, 500, 3000);
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == 350445L && cal_t == 8821987L,
+    check(cal_slope == 350445L && cal_offset == 8821987L,
           "setup: old calibration active");
 
     uint8_t snapshot[EE_SIZE];
     memcpy(snapshot, ee, sizeof(snapshot));
-    uint32_t m_before = cal_m; int32_t t_before = cal_t;
-    uint32_t m_new = 0; int32_t t_new = 0;
-    check(calibration_solve(500, 3000, 550, 3300, &m_new, &t_new) == CAL_ERR_NONE,
+    uint32_t slope_before = cal_slope; int32_t offset_before = cal_offset;
+    uint32_t slope_new = 0; int32_t offset_new = 0;
+    check(calibration_solve(500, 3000, 550, 3300, &slope_new, &offset_new) == CAL_ERR_NONE,
           "setup: alternative fit solved");
 
     /* Simulated write failure: eeprom_write() drops every byte, so the
        read-back verify must fail. */
     mock_write_enabled = 0;
-    bool ok = calibration_commit_current(500, 3000, m_new, t_new);
+    bool ok = calibration_commit_current(500, 3000, slope_new, offset_new);
     mock_write_enabled = 1;
     check(!ok, "commit reports the failure");
     check(memcmp(ee, snapshot, sizeof(snapshot)) == 0, "EEPROM untouched");
-    check(cal_m == m_before && cal_t == t_before,
+    check(cal_slope == slope_before && cal_offset == offset_before,
           "RAM calibration still the old one");
 
     /* The old calibration must still be usable for the runtime conversion. */
@@ -666,14 +677,14 @@ static int test_commit_flags(void)
 
     ee_fill(0x00);
     store_block(CAL_FLAG_CURRENT | 0x80, 350445L, 8821987L, 500, 3000);
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == 350445L, "setup: block with unknown flag bits loaded");
+    check(cal_slope == 350445L, "setup: block with unknown flag bits loaded");
 
-    uint32_t m_new = 0; int32_t t_new = 0;
-    check(calibration_solve(500, 3000, 550, 3300, &m_new, &t_new) == CAL_ERR_NONE,
+    uint32_t slope_new = 0; int32_t offset_new = 0;
+    check(calibration_solve(500, 3000, 550, 3300, &slope_new, &offset_new) == CAL_ERR_NONE,
           "setup: fit solved");
-    check(calibration_commit_current(500, 3000, m_new, t_new),
+    check(calibration_commit_current(500, 3000, slope_new, offset_new),
           "commit accepted");
     cal_block_t stored;
     memcpy(&stored, ee + CAL_EEPROM_OFFSET, sizeof(stored));
@@ -694,9 +705,9 @@ static int test_reset_clears_flags(void)
     ee_fill(0x00);
     store_block(0x07 /* current + both reserved voltage bits */,
                 318629L, 9140616L, 500, 3000);
-    cal_m = 0; cal_t = 0;
+    cal_slope = 0; cal_offset = 0;
     calibration_init();
-    check(cal_m == 318629L && cal_t == 9140616L,
+    check(cal_slope == 318629L && cal_offset == 9140616L,
           "setup: fully flagged block loaded");
 
     check(calibration_reset(), "reset accepted");
@@ -705,11 +716,11 @@ static int test_reset_clears_flags(void)
     check(stored.flags == 0, "all channel flags cleared");
     check(stored.magic == CAL_MAGIC && stored.crc == test_crc8(&stored),
           "default block written validly");
-    check(stored.curr_m == LOAD_CAL_M && stored.curr_t == LOAD_CAL_T,
+    check(stored.curr_slope == LOAD_CAL_SLOPE && stored.curr_offset == LOAD_CAL_OFFSET,
           "compile-time defaults stored");
     check(stored.curr_lo == CAL_CURR_LO_DEFAULT &&
           stored.curr_hi == CAL_CURR_HI_DEFAULT, "default points stored");
-    check(cal_m == LOAD_CAL_M && cal_t == LOAD_CAL_T,
+    check(cal_slope == LOAD_CAL_SLOPE && cal_offset == LOAD_CAL_OFFSET,
           "RAM constants back to the compile-time defaults");
 
     return failures > before ? 1 : 0;
@@ -719,8 +730,8 @@ static int test_reset_clears_flags(void)
 int main(void)
 {
     printf("ZPB30A1 runtime calibration host tests\n");
-    printf("defaults: LOAD_CAL_M=%ld LOAD_CAL_T=%ld\n\n",
-           (long)LOAD_CAL_M, (long)LOAD_CAL_T);
+    printf("defaults: LOAD_CAL_SLOPE=%ld LOAD_CAL_OFFSET=%ld\n\n",
+           (long)LOAD_CAL_SLOPE, (long)LOAD_CAL_OFFSET);
 
     int failed = 0;
     failed += test_ccr1_table();

@@ -4,8 +4,8 @@ The ZPB30A1 drives the load current open-loop: the MCU sets a PWM value and
 there is no current feedback (this hardware design is discussed in
 [upstream issue #2](https://github.com/herm/ZPB30A1_Firmware/issues/2)). The
 relationship between the requested current and the PWM value is linear but
-**unit-specific**. The constants in `software/config.h` (`LOAD_CAL_T`,
-`LOAD_CAL_M`) were measured on the author's device and can be significantly
+**unit-specific**. The constants in `software/config.h` (`LOAD_CAL_OFFSET`,
+`LOAD_CAL_SLOPE`) were measured on the author's device and can be significantly
 different on another unit. A typical uncalibrated unit draws 650 mA while set
 to 500 mA.
 
@@ -128,7 +128,7 @@ The reason is shown as `ERR` plus a three-digit number:
 | `002` | Range: a setpoint or measurement is outside 200 ... 10000 mA, the setpoints are less than 200 mA apart, or the measurements are less than 100 mA apart. | Use valid, well-separated points. |
 | `003` | Gain: measured/requested is outside 0.5 ... 2.0. | Check the DMM, wiring and setpoints. If the unit is more than 2x off, use the compile-time method to get it closer first, then repeat the wizard. |
 | `004` | Slope: the resulting slope is outside 150000 ... 700000 or more than 2x different from the current constants. | Usually a bad measurement; repeat the run. |
-| `005` | Offset: the resulting offset is outside +/-2000 mA or the final offset constant is out of range. | Check the points and repeat. |
+| `005` | Offset: the measured intercept is outside +/-2000 mA, or the resulting offset constant is out of range. | Check the points and repeat. |
 | `006` | PWM: the fit would need a PWM <= 0 at the LO point or > 0xFFFF at the HI point, i.e. the points cannot be realized by the hardware. | Raise the LO point or lower the HI point, and check the supply. |
 | `WR`  | EEPROM write/verify failed. | The previous calibration is still active. Check the EEPROM, then retry; `DEF` can be used to rewrite a clean default block. |
 
@@ -170,11 +170,12 @@ A valid calibration in the EEPROM **overrides** the compile-time constants. Run
 The firmware converts the current setpoint to the raw PWM compare value
 (16-bit `TIM1->CCR1`) as:
 
-    PWM = (current_mA * LOAD_CAL_M - LOAD_CAL_T) / 2^16
+    PWM = (current_mA * LOAD_CAL_SLOPE - LOAD_CAL_OFFSET) / 2^16
 
-* `LOAD_CAL_M` (`m`): slope, in 2^16 PWM LSBs per mA.
-* `LOAD_CAL_T` (`t`): offset; usually negative, because the PWM grows
-  over-proportionally at low currents.
+* `LOAD_CAL_SLOPE` (`slope`): slope, in 2^16 PWM LSBs per mA.
+* `LOAD_CAL_OFFSET` (`offset`): the Q16 term subtracted from the slope term;
+  the actual y-intercept is `-LOAD_CAL_OFFSET / 2^16`, so a positive value
+  lowers the PWM.
 
 ### Measuring
 
@@ -196,19 +197,19 @@ The firmware converts the current setpoint to the raw PWM compare value
 
 1. Open `hardware/i_load.ods` (LibreOffice etc.). It implements the firmware
    formula above: enter your measured points, and the spreadsheet computes the
-   linear fit, `m`, `t`, and the resulting error per point.
+   linear fit (`slope`, `offset`) and the resulting error per point.
 2. Replace the measurement column with your own values and read the resulting
-   `m` and `t`.
+   `slope` and `offset`.
 3. An error of about 1-2 % over the measured range is a realistic result.
 
-Quicker alternative: scale `LOAD_CAL_T` by the relative error you measure
-(e.g. if the real current is 20 % too high, reduce `LOAD_CAL_T` by 20 %),
+Quicker alternative: scale `LOAD_CAL_OFFSET` by the relative error you measure
+(e.g. if the real current is 20 % too high, reduce `LOAD_CAL_OFFSET` by 20 %),
 reflash and repeat until close enough. This works because the offset dominates
 the error on most units.
 
 ### Applying
 
-1. Set `LOAD_CAL_T` / `LOAD_CAL_M` in `software/config.h`.
+1. Set `LOAD_CAL_OFFSET` / `LOAD_CAL_SLOPE` in `software/config.h`.
 2. Rebuild and reflash, then verify the measurement points again and refine if
    necessary. See the README ("Chip") for flash endurance.
 3. `make clear_eeprom` (or `CAL -> DEF`) removes a stored calibration so the
@@ -218,21 +219,22 @@ the error on most units.
 
 * The wizard applies two requested currents (`LO`, `HI`), waits for the loop to
   regulate, and asks for the actual currents measured on the DMM. From those
-  two points it computes the measured gain and offset and corrects the
-  reference `m`/`t` that was active during the run. It does not attempt to
-  measure PWM directly (there is no feedback path for that).
-* The fit is validated before it can be stored: gain 0.5 ... 2.0, offset
-  +/-2000 mA, slope 150000 ... 700000, |t| <= 5e8, and realizability (the LO
-  point must need a positive PWM, the HI point must fit in 0xFFFF). A fit that
-  would be clamped is rejected with `006`.
+  two points it computes the measured gain and intercept and corrects the
+  reference `slope`/`offset` that was active during the run. It does not
+  attempt to measure PWM directly (there is no feedback path for that).
+* The fit is validated before it can be stored: gain 0.5 ... 2.0, intercept
+  +/-2000 mA, slope 150000 ... 700000, |offset| <= 5e8, and realizability (the
+  LO point must need a positive PWM, the HI point must fit in 0xFFFF). A fit
+  that would be clamped is rejected with `006`.
 * The calibration is a separate 40-byte, versioned block at EEPROM address
   `0x40` (magic `0x5A`, version 1, CRC-8). It is independent of `settings_t`.
   The block is written payload-first, then the CRC, then the magic byte, and
   read back for verification. An interrupted write leaves a block that fails a
   check, so the next boot falls back to the compile-time defaults.
 * At runtime `calibration_current_to_pwm()` performs
-  `PWM = (I*m - t) / 2^16` in Q4 and clamps to `[0, 0xFFFF]`. The solver
-  validates with the same function, so the two cannot drift apart.
+  `PWM = (I*slope - offset) / 2^16` in Q4 and clamps to `[0, 0xFFFF]`. The
+  solver validates with the same core conversion before clamping, so the two
+  cannot drift apart.
 * Unknown channel flags are ignored, so a block written by newer firmware can
   still be read. `CAL_VERSION` changes only if the layout itself changes.
 
