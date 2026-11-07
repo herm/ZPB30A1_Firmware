@@ -148,7 +148,9 @@ static inline void load_update(void)
     /* NOTE: Here v_load is used directly instead of adc_get_voltage, because
        for the MOSFET's power dissipation only the voltage that reaches the load's
        terminals is relevant. */
-    uint32_t current_power_limited = 0;
+    /* Default to no limit: at V=0 the power limit must not apply, and at
+       very low V the computed limit is above CUR_MAX anyway. */
+    uint32_t current_power_limited = CUR_MAX;
     if (v_load > 0) {
         current_power_limited = (uint32_t)(POW_ABS_MAX) * 1000 / v_load;
     }
