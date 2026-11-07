@@ -233,9 +233,14 @@ static uint8_t ui_num_subitem(const MenuItem *item)
 /* Show a new menu. */
 static void ui_push_item(const MenuItem *item)
 {
-    /* Bounds guard: keep one stack slot free for the error menu, which
-       ui_timer() pushes from any depth. ui_timer() retries every tick. */
-    if (menu_stack_head >= MENU_STACK_DEPTH - 1) {
+    /* Normal menu pushes stop one slot short; only the error menu, which
+       ui_timer() pushes from any depth, may use the last slot. This keeps
+       the reservation real and still bounds the stack: the error menu can
+       move head from DEPTH-2 to DEPTH-1, never beyond. */
+    uint8_t limit = (item == &menu_error)
+                  ? MENU_STACK_DEPTH - 1
+                  : MENU_STACK_DEPTH - 2;
+    if (menu_stack_head >= limit) {
         return;
     }
     menu_stack_head++;
